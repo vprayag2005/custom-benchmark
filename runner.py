@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import time
+import gc
 import argparse
 import textwrap
 import tempfile
@@ -87,10 +88,17 @@ class BenchmarkRunner:
     def _calibrate_warm(self, func):
         number = 1
         while True:
-            t = time.perf_counter()
-            for _ in range(number):
-                func()
-            if time.perf_counter() - t >= 0.1 or number >= 100000:
+            gcold = gc.isenabled()
+            gc.disable()
+            try:
+                t = time.perf_counter()
+                for _ in range(number):
+                    func()
+                elapsed = time.perf_counter() - t
+            finally:
+                if gcold:
+                    gc.enable()
+            if elapsed >= 0.1 or number >= 100000:
                 break
             number *= 10
         return number
@@ -101,7 +109,7 @@ class BenchmarkRunner:
         root_setup = f"'{root_path}', " if root_path else ""
         fp = func._filepath.replace('\\', '/')
         code = textwrap.dedent(f'''
-            import sys, time, importlib.util
+            import sys, time, importlib.util, gc
             sys.path[0:0] = [{root_setup}'{proj_path}']
             spec = importlib.util.spec_from_file_location("{func._module_name}", "{fp}")
             mod = importlib.util.module_from_spec(spec)
@@ -110,11 +118,18 @@ class BenchmarkRunner:
             from sympy.core.cache import clear_cache
             n = 1
             while True:
-                t = time.perf_counter()
-                for _ in range(n):
-                    clear_cache()
-                    f()
-                if time.perf_counter() - t >= 0.1 or n >= 10000: break
+                gcold = gc.isenabled()
+                gc.disable()
+                try:
+                    t = time.perf_counter()
+                    for _ in range(n):
+                        clear_cache()
+                        f()
+                    elapsed = time.perf_counter() - t
+                finally:
+                    if gcold:
+                        gc.enable()
+                if elapsed >= 0.1 or n >= 10000: break
                 n *= 10
             print(n)
         ''')
@@ -126,27 +141,39 @@ class BenchmarkRunner:
         fp = func._filepath.replace('\\', '/')
         for _ in range(repeat):
             if self.mode == "warm":
-                t = time.perf_counter()
-                for _ in range(number):
-                    func()
-                times.append((time.perf_counter() - t) / number)
+                gcold = gc.isenabled()
+                gc.disable()
+                try:
+                    t = time.perf_counter()
+                    for _ in range(number):
+                        func()
+                    times.append((time.perf_counter() - t) / number)
+                finally:
+                    if gcold:
+                        gc.enable()
             else:
                 root_path = str(self.active_root).replace('\\', '/') if self.active_root else ""
                 proj_path = str(PROJ_ROOT).replace('\\', '/')
                 root_setup = f"'{root_path}', " if root_path else ""
                 code = textwrap.dedent(f'''
-                    import sys, time, importlib.util
+                    import sys, time, importlib.util, gc
                     sys.path[0:0] = [{root_setup}'{proj_path}']
                     spec = importlib.util.spec_from_file_location("{func._module_name}", "{fp}")
                     mod = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(mod)
                     f = getattr(mod, "{func.__name__}")
                     from sympy.core.cache import clear_cache
-                    t = time.perf_counter()
-                    for _ in range({number}):
-                        clear_cache()
-                        f()
-                    print(time.perf_counter() - t)
+                    gcold = gc.isenabled()
+                    gc.disable()
+                    try:
+                        t = time.perf_counter()
+                        for _ in range({number}):
+                            clear_cache()
+                            f()
+                        print(time.perf_counter() - t)
+                    finally:
+                        if gcold:
+                            gc.enable()
                 ''')
                 res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
                 if res.returncode == 0 and res.stdout:

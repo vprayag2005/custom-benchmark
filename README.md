@@ -1,13 +1,5 @@
 # SymPy Custom Benchmark Tool
 
-A specialized tool for running and comparing benchmarks for SymPy and related libraries (like python-flint). 
-
-## Features
-- **Benchmark Discovery**: Automatically finds functions decorated with `@benchmark` in specified directories.
-- **Execution Modes**: Supports "cold" (fresh subprocess for each run) and "warm" (in-process) timing modes.
-- **Library Comparison**: Compare performance across different libraries (e.g., SymPy vs. Flint).
-- **Snapshot Management**: Compare current results against saved baselines.
-
 ## Setup
 Install dependencies using `pip`:
 ```bash
@@ -37,4 +29,4 @@ sympy-benchmark run --update
 
 ## Disclaimer
 > [!IMPORTANT]
-> This codebase was primarily generated and structured by an LLM (Large Language Model) as part of an agentic coding experiment. While it provides a functional benchmarking framework, it should be reviewed carefully for specific production needs.
+> Since this is a prototype, the code is mostly written by an LLM.
