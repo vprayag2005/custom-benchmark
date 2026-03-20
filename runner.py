@@ -12,7 +12,6 @@ import tempfile
 import shutil
 from tabulate import tabulate
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
 PROJ_ROOT = pathlib.Path(__file__).resolve().parent
 SNAP_FILE = PROJ_ROOT / "results.snap.json"
 
@@ -35,7 +34,7 @@ class BenchmarkRunner:
         self.mode = mode
         self.baselines = json.loads(SNAP_FILE.read_text()) if SNAP_FILE.exists() else {}
         self.formatter = ResultFormatter()
-        self.active_root = ROOT
+        self.active_root = None
 
     def _clone_upstream(self):
         print("Cloning latest SymPy from GitHub...")
@@ -60,7 +59,11 @@ class BenchmarkRunner:
         if not base_path.exists():
             return []
 
-        for p in [str(self.active_root), str(PROJ_ROOT), str(base_path.resolve())]:
+        paths = [str(PROJ_ROOT), str(base_path.resolve())]
+        if self.active_root:
+            paths.insert(0, str(self.active_root))
+            
+        for p in paths:
             if p not in sys.path:
                 sys.path.insert(0, p)
 
@@ -93,19 +96,24 @@ class BenchmarkRunner:
         return number
 
     def _calibrate_cold(self, func):
-        root, proj = str(self.active_root).replace('\\', '/'), str(PROJ_ROOT).replace('\\', '/')
+        root_path = str(self.active_root).replace('\\', '/') if self.active_root else ""
+        proj_path = str(PROJ_ROOT).replace('\\', '/')
+        root_setup = f"'{root_path}', " if root_path else ""
         fp = func._filepath.replace('\\', '/')
         code = textwrap.dedent(f'''
             import sys, time, importlib.util
-            sys.path[0:0] = ['{root}', '{proj}']
+            sys.path[0:0] = [{root_setup}'{proj_path}']
             spec = importlib.util.spec_from_file_location("{func._module_name}", "{fp}")
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
             f = getattr(mod, "{func.__name__}")
+            from sympy.core.cache import clear_cache
             n = 1
             while True:
                 t = time.perf_counter()
-                for _ in range(n): f()
+                for _ in range(n):
+                    clear_cache()
+                    f()
                 if time.perf_counter() - t >= 0.1 or n >= 10000: break
                 n *= 10
             print(n)
@@ -115,7 +123,6 @@ class BenchmarkRunner:
 
     def _execute(self, func, number, repeat):
         times = []
-        root, proj = str(self.active_root).replace('\\', '/'), str(PROJ_ROOT).replace('\\', '/')
         fp = func._filepath.replace('\\', '/')
         for _ in range(repeat):
             if self.mode == "warm":
@@ -124,15 +131,21 @@ class BenchmarkRunner:
                     func()
                 times.append((time.perf_counter() - t) / number)
             else:
+                root_path = str(self.active_root).replace('\\', '/') if self.active_root else ""
+                proj_path = str(PROJ_ROOT).replace('\\', '/')
+                root_setup = f"'{root_path}', " if root_path else ""
                 code = textwrap.dedent(f'''
                     import sys, time, importlib.util
-                    sys.path[0:0] = ['{root}', '{proj}']
+                    sys.path[0:0] = [{root_setup}'{proj_path}']
                     spec = importlib.util.spec_from_file_location("{func._module_name}", "{fp}")
                     mod = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(mod)
                     f = getattr(mod, "{func.__name__}")
+                    from sympy.core.cache import clear_cache
                     t = time.perf_counter()
-                    for _ in range({number}): f()
+                    for _ in range({number}):
+                        clear_cache()
+                        f()
                     print(time.perf_counter() - t)
                 ''')
                 res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -186,7 +199,7 @@ class BenchmarkRunner:
                     os.chmod(path, stat.S_IWRITE)
                     func(path)
                 shutil.rmtree(temp_dir, onerror=on_rm_error)
-                self.active_root = ROOT
+                self.active_root = None
 
     def compare(self, libraries, benchmark_filter=""):
         bench_dir = PROJ_ROOT / "benchmarks"
